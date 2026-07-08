@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сканирай баркод</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -28,60 +26,43 @@
             background: #4fc3f7; border: none; color: #000; padding: 10px 24px;
             border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin: 8px;
         }
-        #reader__scan_region img { display: none; }
         .status { margin-top: 20px; font-size: 14px; color: #888; }
-        .hidden { display: none; }
     </style>
 </head>
 <body>
     <h1>📷 Сканирай баркод</h1>
     <p>Насочете камерата към баркода на продукта</p>
     <div id="reader"></div>
-    <div class="status" id="status">Камерата се зарежда...</div>
+    <div class="status" id="status">Зареждане...</div>
 
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script>
-        // Бот username за deep link (смени ако е различен)
-        const BOT_USERNAME = 'BOLERO_EVO2_BOT';
-
-        let html5QrCode = null;
-        let isTgReady = false;
-
-        function initTelegram(callback) {
-            let attempts = 30;
-            function check() {
-                if (window.Telegram && Telegram.WebApp) {
-                    Telegram.WebApp.ready();
-                    Telegram.WebApp.expand();
-                    isTgReady = true;
-                    callback(true);
-                } else if (attempts > 0) {
-                    attempts--;
-                    setTimeout(check, 100);
-                } else {
-                    callback(false);
-                }
-            }
-            check();
+        // Инициализация веднага
+        if (window.Telegram && Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
         }
 
         function startScanner() {
             const status = document.getElementById('status');
-            html5QrCode = new Html5Qrcode("reader");
-            html5QrCode.start(
+            new Html5Qrcode("reader").start(
                 { facingMode: "environment" },
-                { fps: 15, qrbox: { width: 280, height: 120 }, aspectRatio: 1.0 },
-                function onScan(decodedText) {
-                    if (!decodedText) return;
-                    if (html5QrCode) { try { html5QrCode.pause(); } catch(e) {} }
-                    status.textContent = '✅ Баркод: ' + decodedText;
-                    // Deep link: отваря чата с бота и изпраща /start BARCODE_...
-                    var deepLink = 'https://t.me/' + BOT_USERNAME + '?start=BARCODE_' + decodedText;
-                    if (isTgReady && Telegram.WebApp) {
-                        Telegram.WebApp.openTelegramLink(deepLink);
-                        Telegram.WebApp.close();
-                    } else {
-                        window.location.href = deepLink;
-                    }
+                { fps: 15, qrbox: { width: 280, height: 120 } },
+                function(code) {
+                    status.textContent = '✅ Баркод: ' + code;
+                    // Опитваме sendData, после затваряме
+                    try {
+                        if (window.Telegram && Telegram.WebApp) {
+                            Telegram.WebApp.sendData(code);
+                        }
+                    } catch(e) {}
+                    setTimeout(function() {
+                        try {
+                            if (window.Telegram && Telegram.WebApp) {
+                                Telegram.WebApp.close();
+                            }
+                        } catch(e) {}
+                    }, 200);
                 },
                 function() {}
             ).then(() => {
@@ -90,14 +71,7 @@
                 status.textContent = '❌ Грешка: ' + err;
             });
         }
-
-        initTelegram(function(success) {
-            if (!success) console.log('Telegram WebApp unavailable – window fallback');
-            window.addEventListener('DOMContentLoaded', startScanner);
-            if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                startScanner();
-            }
-        });
+        window.addEventListener('DOMContentLoaded', startScanner);
     </script>
 </body>
 </html>
