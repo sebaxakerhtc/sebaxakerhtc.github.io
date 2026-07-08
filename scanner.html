@@ -40,6 +40,9 @@
     <div class="status" id="status">Камерата се зарежда...</div>
 
     <script>
+        // Бот username за deep link (смени ако е различен)
+        const BOT_USERNAME = 'BOLERO_EVO2_BOT';
+
         let html5QrCode = null;
         let isTgReady = false;
 
@@ -71,14 +74,13 @@
                     if (!decodedText) return;
                     if (html5QrCode) { try { html5QrCode.pause(); } catch(e) {} }
                     status.textContent = '✅ Баркод: ' + decodedText;
+                    // Deep link: отваря чата с бота и изпраща /start BARCODE_...
+                    var deepLink = 'https://t.me/' + BOT_USERNAME + '?start=BARCODE_' + decodedText;
                     if (isTgReady && Telegram.WebApp) {
-                        Telegram.WebApp.sendData(decodedText);
-                        setTimeout(function() {
-                            Telegram.WebApp.close();
-                        }, 500);
+                        Telegram.WebApp.openTelegramLink(deepLink);
+                        Telegram.WebApp.close();
                     } else {
-                        navigator.clipboard.writeText(decodedText);
-                        status.textContent = '✅ Кодът е копиран: ' + decodedText;
+                        window.location.href = deepLink;
                     }
                 },
                 function() {}
@@ -90,9 +92,8 @@
         }
 
         initTelegram(function(success) {
-            if (!success) console.log('Telegram WebApp unavailable – clipboard fallback');
+            if (!success) console.log('Telegram WebApp unavailable – window fallback');
             window.addEventListener('DOMContentLoaded', startScanner);
-            // Ако DOM вече е зареден, стартираме веднага
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 startScanner();
             }
