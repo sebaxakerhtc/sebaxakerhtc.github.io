@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Сканирай баркод</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #0d0d0d;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 22px;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+        p {
+            font-size: 14px;
+            color: #aaa;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        #reader {
+            width: 100%;
+            max-width: 400px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+            background: #1a1a1a;
+        }
+        #reader video {
+            border-radius: 12px 12px 0 0;
+            width: 100% !important;
+        }
+        #reader__dashboard_section {
+            background: #1a1a1a;
+            border-radius: 0 0 12px 12px;
+        }
+        #reader__dashboard_section button {
+            background: #4fc3f7;
+            border: none;
+            color: #000;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 8px;
+        }
+        #reader__dashboard_section button:hover {
+            background: #29b6f6;
+        }
+        #reader__scan_region img {
+            display: none;
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #888;
+        }
+        .result {
+            margin-top: 16px;
+            background: #1a1a1a;
+            padding: 16px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .result .code {
+            font-size: 24px;
+            font-weight: 700;
+            color: #4fc3f7;
+            word-break: break-all;
+        }
+        .result .label {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .hidden { display: none; }
+        .btn-send {
+            margin-top: 20px;
+            background: #4caf50;
+            border: none;
+            color: #fff;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            max-width: 400px;
+        }
+        .btn-send:hover { background: #43a047; }
+        .btn-cancel {
+            margin-top: 8px;
+            background: transparent;
+            border: 1px solid #555;
+            color: #aaa;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            width: 100%;
+            max-width: 400px;
+        }
+        .btn-cancel:hover { border-color: #888; color: #fff; }
+    </style>
+</head>
+<body>
+    <h1>📷 Сканирай баркод</h1>
+    <p>Насочете камерата към баркода на продукта</p>
+
+    <div id="reader"></div>
+    <div class="status" id="status">Камерата се зарежда...</div>
+
+    <div id="resultContainer" class="result hidden">
+        <div class="label">Открит баркод</div>
+        <div class="code" id="barcodeResult"></div>
+    </div>
+
+    <button id="sendBtn" class="btn-send hidden" onclick="sendBarcode()">📤 Изпрати на бота</button>
+    <button id="rescanBtn" class="btn-cancel hidden" onclick="restartScanner()">🔄 Сканирай отново</button>
+    <button id="closeBtn" class="btn-cancel" onclick="closeApp()">❌ Затвори</button>
+
+    <script>
+        let html5QrCode = null;
+        let lastBarcode = '';
+
+        function startScanner() {
+            const reader = document.getElementById('reader');
+            const status = document.getElementById('status');
+
+            html5QrCode = new Html5Qrcode("reader");
+
+            html5QrCode.start(
+                { facingMode: "environment" },
+                {
+                    fps: 15,
+                    qrbox: { width: 280, height: 120 },
+                    aspectRatio: 1.0
+                },
+                onScanSuccess,
+                onScanFailure
+            ).then(() => {
+                status.textContent = '✅ Камерата работи. Насочете към баркод.';
+            }).catch(err => {
+                status.textContent = '❌ Грешка с камерата: ' + err;
+                console.error(err);
+            });
+        }
+
+        function onScanSuccess(decodedText, decodedResult) {
+            if (decodedText && decodedText !== lastBarcode) {
+                lastBarcode = decodedText;
+                html5QrCode.pause();
+                showResult(decodedText);
+            }
+        }
+
+        function onScanFailure(error) {
+            // ignore
+        }
+
+        function showResult(barcode) {
+            document.getElementById('reader').classList.add('hidden');
+            document.getElementById('status').classList.add('hidden');
+            document.getElementById('resultContainer').classList.remove('hidden');
+            document.getElementById('barcodeResult').textContent = barcode;
+            document.getElementById('sendBtn').classList.remove('hidden');
+            document.getElementById('rescanBtn').classList.remove('hidden');
+            document.getElementById('closeBtn').classList.add('hidden');
+        }
+
+        function sendBarcode() {
+            const barcode = document.getElementById('barcodeResult').textContent;
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(barcode);
+                Telegram.WebApp.close();
+            } else {
+                // fallback for testing outside Telegram
+                document.getElementById('sendBtn').textContent = '✅ Код: ' + barcode;
+                document.getElementById('rescanBtn').classList.remove('hidden');
+                document.getElementById('closeBtn').classList.remove('hidden');
+                navigator.clipboard.writeText(barcode).then(() => {
+                    document.getElementById('sendBtn').textContent = '✅ Копиран: ' + barcode;
+                });
+            }
+        }
+
+        function restartScanner() {
+            lastBarcode = '';
+            document.getElementById('resultContainer').classList.add('hidden');
+            document.getElementById('sendBtn').classList.add('hidden');
+            document.getElementById('rescanBtn').classList.add('hidden');
+            document.getElementById('closeBtn').classList.add('hidden');
+            document.getElementById('reader').classList.remove('hidden');
+            document.getElementById('status').classList.remove('hidden');
+            document.getElementById('status').textContent = 'Камерата се зарежда...';
+
+            if (html5QrCode) {
+                html5QrCode.resume();
+            } else {
+                startScanner();
+            }
+        }
+
+        function closeApp() {
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.close();
+            } else {
+                document.title = 'Затворено';
+                document.body.innerHTML = '<p style="text-align:center;margin-top:40vh;color:#888;">❌ Затворено</p>';
+            }
+        }
+
+        // Detect Telegram WebApp environment
+        try {
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.ready();
+                Telegram.WebApp.expand();
+            }
+        } catch(e) {}
+
+        // Auto-start
+        window.addEventListener('DOMContentLoaded', startScanner);
+    </script>
+</body>
+</html>
