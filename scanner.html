@@ -73,7 +73,9 @@
                     status.textContent = '✅ Баркод: ' + decodedText;
                     if (isTgReady && Telegram.WebApp) {
                         Telegram.WebApp.sendData(decodedText);
-                        Telegram.WebApp.close();
+                        setTimeout(function() {
+                            Telegram.WebApp.close();
+                        }, 500);
                     } else {
                         navigator.clipboard.writeText(decodedText);
                         status.textContent = '✅ Кодът е копиран: ' + decodedText;
