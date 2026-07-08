@@ -3,74 +3,179 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Сканирай баркод</title>
+    <title>Сканирай баркод (debug)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: monospace;
             background: #0d0d0d;
             color: #fff;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
             min-height: 100vh;
-            padding: 20px;
+            padding: 16px;
         }
-        h1 { font-size: 22px; margin-bottom: 10px; color: #4fc3f7; }
-        p { font-size: 14px; color: #aaa; margin-bottom: 20px; text-align: center; }
-        #reader { width: 100%; max-width: 400px; border-radius: 12px; overflow: hidden; background: #1a1a1a; }
+        h1 { font-size: 18px; margin: 8px 0; color: #4fc3f7; }
+        .debug {
+            width: 100%;
+            max-width: 400px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .debug .label { color: #888; }
+        .debug .val { color: #4fc3f7; word-break: break-all; }
+        .debug .err { color: #ef5350; }
+        .debug .ok { color: #66bb6a; }
+        #reader { width: 100%; max-width: 400px; }
         #reader video { width: 100% !important; }
-        #reader__dashboard_section { background: #1a1a1a; }
-        #reader__dashboard_section button {
-            background: #4fc3f7; border: none; color: #000; padding: 10px 24px;
-            border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin: 8px;
+        .btn {
+            background: #4fc3f7; color: #000; border: none;
+            padding: 12px 24px; border-radius: 8px; font-size: 14px;
+            font-weight: 600; cursor: pointer; width: 100%; max-width: 400px; margin-top: 8px;
         }
-        .status { margin-top: 20px; font-size: 14px; color: #888; }
+        .btn:hover { background: #29b6f6; }
+        .btn-red { background: #ef5350; color: #fff; }
+        .btn-red:hover { background: #e53935; }
     </style>
 </head>
 <body>
-    <h1>📷 Сканирай баркод</h1>
-    <p>Насочете камерата към баркода на продукта</p>
+    <h1>📷 Дебъг скенер</h1>
+
+    <div class="debug" id="debugStatus">
+        <div><span class="label">⏳ Статус: </span><span class="val" id="lblStatus">Инициализация...</span></div>
+    </div>
+
+    <div class="debug" id="debugTelegram">
+        <div><span class="label">window.Telegram: </span><span class="val" id="lblTG">проверка...</span></div>
+        <div><span class="label">Telegram.WebApp: </span><span class="val" id="lblWA">проверка...</span></div>
+        <div><span class="label">Telegram.WebApp.sendData: </span><span class="val" id="lblSD">-</span></div>
+    </div>
+
     <div id="reader"></div>
-    <div class="status" id="status">Зареждане...</div>
+
+    <div class="debug hidden" id="debugResult">
+        <div><span class="label">📦 Баркод: </span><span class="val" id="lblBarcode">-</span></div>
+        <div><span class="label">sendData резултат: </span><span class="val" id="lblSendResult">-</span></div>
+    </div>
+
+    <button id="btnSend" class="btn hidden" onclick="sendBarcode()">📤 Изпрати (sendData)</button>
+    <button id="btnDeep" class="btn hidden" onclick="sendDeepLink()">🔗 Изпрати (deep link)</button>
+    <button id="btnClose" class="btn btn-red hidden" onclick="closeApp()">❌ Затвори</button>
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script>
-        // Инициализация веднага
-        if (window.Telegram && Telegram.WebApp) {
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
+        let lastBarcode = '';
+
+        function $(id) { return document.getElementById(id); }
+
+        function log(msg) {
+            $('lblStatus').textContent = msg;
+            console.log('[SCAN] ' + msg);
+        }
+
+        function init() {
+            // Проверка на Telegram
+            const hasTG = typeof window.Telegram !== 'undefined' && window.Telegram !== null;
+            $('lblTG').textContent = hasTG ? '✅ да' : '❌ НЕ';
+            $('lblTG').className = hasTG ? 'val ok' : 'val err';
+
+            const hasWA = hasTG && typeof Telegram.WebApp !== 'undefined' && Telegram.WebApp !== null;
+            $('lblWA').textContent = hasWA ? '✅ да' : '❌ НЕ';
+            $('lblWA').className = hasWA ? 'val ok' : 'val err';
+
+            const hasSend = hasWA && typeof Telegram.WebApp.sendData === 'function';
+            $('lblSD').textContent = hasSend ? '✅ да' : '❌ НЕ';
+            $('lblSD').className = hasSend ? 'val ok' : 'val err';
+
+            if (hasWA) {
+                try {
+                    Telegram.WebApp.ready();
+                    Telegram.WebApp.expand();
+                    log('✅ Telegram.WebApp.ready() + expand()');
+                } catch(e) {
+                    log('❌ Telegram.WebApp грешка: ' + e.message);
+                }
+            } else {
+                log('❌ Telegram.WebApp не е наличен');
+            }
         }
 
         function startScanner() {
-            const status = document.getElementById('status');
+            init();
+            log('📷 Стартиране на камерата...');
             new Html5Qrcode("reader").start(
                 { facingMode: "environment" },
                 { fps: 15, qrbox: { width: 280, height: 120 } },
                 function(code) {
-                    status.textContent = '✅ Баркод: ' + code;
-                    // Опитваме sendData, после затваряме
-                    try {
-                        if (window.Telegram && Telegram.WebApp) {
-                            Telegram.WebApp.sendData(code);
-                        }
-                    } catch(e) {}
-                    setTimeout(function() {
-                        try {
-                            if (window.Telegram && Telegram.WebApp) {
-                                Telegram.WebApp.close();
-                            }
-                        } catch(e) {}
-                    }, 200);
+                    if (!code) return;
+                    lastBarcode = code;
+                    $('lblBarcode').textContent = code;
+                    $('debugResult').classList.remove('hidden');
+                    $('btnSend').classList.remove('hidden');
+                    $('btnDeep').classList.remove('hidden');
+                    $('btnClose').classList.remove('hidden');
+                    log('✅ Баркод: ' + code);
                 },
                 function() {}
             ).then(() => {
-                status.textContent = '✅ Камерата работи. Насочете към баркод.';
+                log('✅ Камерата работи. Насочете към баркод.');
             }).catch(err => {
-                status.textContent = '❌ Грешка: ' + err;
+                log('❌ Камера грешка: ' + err);
             });
         }
+
+        function sendBarcode() {
+            if (!lastBarcode) return;
+            const hasWA = window.Telegram && Telegram.WebApp;
+            if (!hasWA) {
+                $('lblSendResult').textContent = '❌ Telegram.WebApp не е наличен';
+                $('lblSendResult').className = 'val err';
+                return;
+            }
+            try {
+                Telegram.WebApp.sendData(lastBarcode);
+                $('lblSendResult').textContent = '✅ sendData(' + lastBarcode + ') — без грешка';
+                $('lblSendResult').className = 'val ok';
+                log('✅ sendData изпратен успешно');
+                // Не затваряме — очакваме да видиш резултата
+            } catch(e) {
+                $('lblSendResult').textContent = '❌ Грешка: ' + e.message;
+                $('lblSendResult').className = 'val err';
+                log('❌ sendData грешка: ' + e.message);
+            }
+        }
+
+        function sendDeepLink() {
+            if (!lastBarcode) return;
+            const url = 'https://t.me/BOLERO_EVO2_BOT?start=BARCODE_' + lastBarcode;
+            $('lblSendResult').textContent = '🔗 Отварям: ' + url;
+            $('lblSendResult').className = 'val';
+            log('🔗 Deep link: ' + url);
+            if (window.Telegram && Telegram.WebApp) {
+                try {
+                    Telegram.WebApp.openTelegramLink(url);
+                } catch(e) {
+                    log('❌ openTelegramLink грешка: ' + e.message);
+                    window.open(url, '_blank');
+                }
+            } else {
+                window.open(url, '_blank');
+            }
+        }
+
+        function closeApp() {
+            if (window.Telegram && Telegram.WebApp) {
+                try { Telegram.WebApp.close(); } catch(e) {}
+            } else {
+                document.body.innerHTML = '<p style="text-align:center;margin-top:40vh;color:#888;">❌ Затворено</p>';
+            }
+        }
+
         window.addEventListener('DOMContentLoaded', startScanner);
     </script>
 </body>
