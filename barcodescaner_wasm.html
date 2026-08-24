@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Сканирай баркод (WASM)</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.3/dist/iife/reader/index.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #0d0d0d;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 { font-size: 22px; margin-bottom: 10px; color: #4fc3f7; }
+        p { font-size: 14px; color: #aaa; margin-bottom: 20px; text-align: center; }
+        #reader {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+            background: #1a1a1a;
+        }
+        #reader video { width: 100% !important; height: auto; display: block; }
+        /* Сканираща линия */
+        #reader .scanline {
+            position: absolute;
+            left: 4%; right: 4%; height: 3px;
+            background: linear-gradient(90deg, rgba(79,195,247,0), #4fc3f7, rgba(79,195,247,0));
+            animation: scanline 2.2s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 10;
+        }
+        @keyframes scanline {
+            0% { top: 8%; opacity: 0; }
+            15% { opacity: 1; }
+            85% { opacity: 1; }
+            100% { top: 90%; opacity: 0; }
+        }
+        /* Рамка за насочване (широк правоъгълник) */
+        #reader .scanbox {
+            position: absolute;
+            left: 8%; right: 8%;
+            top: 50%; transform: translateY(-50%);
+            height: 26%;
+            border: 2px solid rgba(79,195,247,0.55);
+            border-radius: 8px;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .status { margin-top: 20px; font-size: 14px; color: #888; text-align: center; min-height: 18px; }
+        .result { margin-top: 16px; background: #1a1a1a; padding: 16px; border-radius: 12px; width: 100%; max-width: 400px; text-align: center; }
+        .result .code { font-size: 24px; font-weight: 700; color: #4fc3f7; word-break: break-all; }
+        .result .label { font-size: 12px; color: #888; margin-top: 4px; }
+        .hidden { display: none !important; }
+        .btn { margin-top: 12px; background: transparent; border: 1px solid #555; color: #aaa; padding: 10px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; width: 100%; max-width: 400px; }
+        .btn:hover { border-color: #888; color: #fff; }
+        .btn-torch {
+            margin-top: 12px;
+            background: transparent;
+            border: 1px solid #ffa726;
+            color: #ffa726;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            width: 100%;
+            max-width: 400px;
+        }
+        .btn-torch:hover { background: rgba(255,167,38,0.12); }
+    </style>
+</head>
+<body>
+    <h1>📷 Сканирай баркод</h1>
+    <p>EAN-8 / EAN-13 — насочете камерата към баркода</p>
+
+    <div id="reader">
+        <video id="video" playsinline autoplay muted></video>
+        <div class="scanbox"></div>
+        <div class="scanline"></div>
+        <canvas id="decodeCanvas" style="display:none;"></canvas>
+    </div>
+    <button id="torchBtn" class="btn-torch hidden" onclick="toggleTorch()">🔦 Фенерче</button>
+    <div class="status" id="status">Камерата се зарежда...</div>
+
+    <div id="resultContainer" class="result hidden">
+        <div class="label">✅ Открит баркод (валидиран EAN)</div>
+        <div class="code" id="barcodeResult"></div>
+        <div id="sendStatus" style="margin-top:12px; font-size:14px;"></div>
+    </div>
+
+    <button id="rescanBtn" class="btn hidden" onclick="restartScanner()">🔄 Сканирай отново</button>
+
+    <script>
+        const BOT_USERNAME = 'bolero_alexbot';
+        let videoEl = null;
+        let canvas = null;
+        let ctx = null;
+        let stream = null;
+        let lastBarcode = '';
+        let isTelegram = false;
+        let dataSent = false;
+        let torchOn = false;
+        let torchSupported = false;
+        let switchAttempted = false;
+        let statusTimer = null;
+        let decoding = false;
+
+        // Инициализация Telegram WebApp
+        try {
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.ready();
+                Telegram.WebApp.expand();
+                isTelegram = true;
+            }
+        } catch(e) {}
+
+        /**
+         * Проверка на контролната сума на EAN-8 и EAN-13.
+         */
+        function isValidEan(code) {
+            if (typeof code !== 'string') return false;
+            if (!/^\d{8}$|^\d{13}$/.test(code)) return false;
+            const check = Number(code[code.length - 1]);
+            const body = code.slice(0, -1);
+            let sum = 0;
+            for (let i = 0; i < body.length; i++) {
+                const weight = (body.length === 12)
+                    ? (i % 2 === 0 ? 1 : 3)
+                    : (i % 2 === 0 ? 3 : 1);
+                sum += Number(body[i]) * weight;
+            }
+            const expected = (10 - (sum % 10)) % 10;
+            return check === expected;
+        }
+
+        // Шаблони за имената на главната задна камера (по приоритет):
+        // - Z Fold 6: "camera 0, facing back"
+        // - iPhone:  "Back Camera"
+        const MAIN_CAMERA_PATTERNS = [
+            /camera 0[^\n]*back/i,
+            /back camera/i
+        ];
+
+        /**
+         * Търси главната задна камера по име (label). Извиква се СЛЕД като
+         * камерата вече е отворена (разрешението е дадено), затова НЕ прави
+         * допълнителен getUserMedia.
+         */
+        async function enumerateMainCameraByLabel() {
+            try {
+                const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+                for (const pattern of MAIN_CAMERA_PATTERNS) {
+                    const found = cams.find(d => pattern.test(d.label));
+                    if (found) return found.deviceId;
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        /**
+         * Спира текущата камера и стартира главната задна камера по име.
+         * Извиква се само ако отворената камера няма torch (напр. Z Fold 6).
+         */
+        async function switchToMainCameraByLabel() {
+            if (switchAttempted) return;
+            switchAttempted = true; // само веднъж на цикъл стартиране
+            try {
+                const mainId = await enumerateMainCameraByLabel();
+                if (mainId) {
+                    // Спираме текущата камера, за да освободим хардуера
+                    stopCamera();
+                    await startWithCamera({ deviceId: { exact: mainId } });
+                }
+            } catch (e) {}
+        }
+
+        /**
+         * Стартира сканера с конкретна камера, включва непрекъснат автофокус
+         * и стартира WASM-цикъла за разпознаване.
+         */
+        async function startWithCamera(cameraConstraint) {
+            const status = document.getElementById('status');
+            document.getElementById('torchBtn').classList.add('hidden');
+
+            stopCamera();
+
+            const videoConstraints = {
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            };
+            Object.assign(videoConstraints, cameraConstraint);
+
+            stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+            const track = stream.getVideoTracks()[0];
+
+            videoEl.srcObject = stream;
+            await videoEl.play();
+
+            // Непрекъснат автофокус — по-бързо захващане
+            try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) {}
+
+            status.textContent = '✅ Камерата работи. Насочете към баркод.';
+
+            // Torch
+            torchSupported = false;
+            try { torchSupported = !!(track.getCapabilities && track.getCapabilities().torch); } catch (e) {}
+            if (torchSupported) {
+                document.getElementById('torchBtn').classList.remove('hidden');
+            } else {
+                document.getElementById('torchBtn').classList.add('hidden');
+                switchToMainCameraByLabel();
+            }
+
+            // Стартираме цикъла за разпознаване (WASM)
+            decodeLoop();
+        }
+
+        function stopCamera() {
+            if (stream) {
+                try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+                stream = null;
+            }
+            if (videoEl) {
+                try { videoEl.srcObject = null; } catch (e) {}
+            }
+        }
+
+        /**
+         * WASM цикъл за разпознаване: video → canvas → readBarcodes.
+         */
+        async function decodeLoop() {
+            if (dataSent) return;
+            if (decoding) {
+                // Предишният кадър още се обработва — пробваме пак скоро
+                setTimeout(decodeLoop, 100);
+                return;
+            }
+            decoding = true;
+            try {
+                const vw = videoEl.videoWidth;
+                const vh = videoEl.videoHeight;
+                if (vw > 0 && vh > 0) {
+                    canvas.width = vw;
+                    canvas.height = vh;
+                    ctx.drawImage(videoEl, 0, 0, vw, vh);
+                    const imageData = ctx.getImageData(0, 0, vw, vh);
+                    const results = await ZXingWASM.readBarcodes(imageData, {
+                        formats: ["EAN13", "EAN8"],
+                        tryHarder: true
+                    });
+                    if (results.length > 0) {
+                        const text = results[0].text;
+                        if (text && text !== lastBarcode && isValidEan(text)) {
+                            lastBarcode = text;
+                            onBarcodeFound(text);
+                        }
+                    }
+                }
+            } catch (e) {}
+            decoding = false;
+            if (!dataSent) setTimeout(decodeLoop, 100); // ~10 fps
+        }
+
+        function onBarcodeFound(code) {
+            if (dataSent) return;
+            dataSent = true;
+            document.getElementById('reader').classList.add('hidden');
+            document.getElementById('torchBtn').classList.add('hidden');
+            document.getElementById('status').classList.add('hidden');
+            document.getElementById('resultContainer').classList.remove('hidden');
+            document.getElementById('barcodeResult').textContent = code;
+            sendBarcode(code);
+        }
+
+        /**
+         * Изпращане само чрез deep link.
+         */
+        function sendBarcode(barcode) {
+            const sendStatus = document.getElementById('sendStatus');
+            sendStatus.innerHTML = '📤 Изпращане чрез Telegram...';
+            sendStatus.style.color = '#fff';
+            document.getElementById('rescanBtn').classList.remove('hidden');
+
+            const deepLink = `https://t.me/${BOT_USERNAME}?start=${barcode}`;
+            window.location.href = deepLink;
+
+            setTimeout(() => {
+                try {
+                    if (isTelegram) Telegram.WebApp.close();
+                } catch(e) {}
+            }, 1200);
+        }
+
+        /**
+         * Включване/изключване на фенерчето.
+         */
+        async function toggleTorch() {
+            const torchBtn = document.getElementById('torchBtn');
+            if (!stream || dataSent) return;
+            if (!torchSupported) return;
+
+            torchOn = !torchOn;
+            const track = stream.getVideoTracks()[0];
+            const forms = [
+                { advanced: [{ torch: torchOn }] },
+                { torch: torchOn }
+            ];
+
+            for (const form of forms) {
+                try {
+                    await track.applyConstraints(form);
+                    await new Promise(r => setTimeout(r, 250));
+                    let settings = null;
+                    try { settings = track.getSettings(); } catch (e) {}
+                    const reported = (settings && typeof settings.torch === 'boolean') ? settings.torch : null;
+
+                    if (reported === torchOn) {
+                        torchBtn.textContent = torchOn ? '🔦 Фенерче: ВКЛ' : '🔦 Фенерче';
+                        return;
+                    }
+                } catch (e) {}
+            }
+
+            torchOn = !torchOn;
+            torchBtn.textContent = '🔦 Не се включи';
+            setTimeout(() => { torchBtn.textContent = '🔦 Фенерче'; }, 1500);
+        }
+
+        /**
+         * Пълен рестарт на камерата.
+         */
+        function restartScanner() {
+            dataSent = false;
+            lastBarcode = '';
+            torchOn = false;
+            switchAttempted = false;
+            document.getElementById('torchBtn').textContent = '🔦 Фенерче';
+            document.getElementById('resultContainer').classList.add('hidden');
+            document.getElementById('rescanBtn').classList.add('hidden');
+            document.getElementById('reader').classList.remove('hidden');
+            document.getElementById('status').classList.remove('hidden');
+            document.getElementById('status').textContent = 'Камерата се зарежда...';
+            startScanner();
+        }
+
+        async function startScanner() {
+            const status = document.getElementById('status');
+            try {
+                await startWithCamera({ facingMode: "environment" });
+            } catch (e) {
+                status.textContent = '❌ Грешка с камерата: ' + e;
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            videoEl = document.getElementById('video');
+            canvas = document.getElementById('decodeCanvas');
+            ctx = canvas.getContext('2d');
+            startScanner();
+        });
+    </script>
+</body>
+</html>
